@@ -1,6 +1,6 @@
 {
   "name": "soundplayer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A modern sound player with spectrum analyzer and library management",
   "main": "main.js",
   "scripts": {
@@ -9,7 +9,10 @@
     "build:win": "electron-builder build --win nsis",
     "build:mac": "electron-builder build --mac",
     "build:linux": "electron-builder build --linux",
-    "build:all": "electron-builder build -wl"
+    "build:all": "electron-builder build -wl",
+    "test": "playwright test",
+    "test:unit": "node --test tests/*.test.cjs",
+    "build:unpacked": "electron-builder --dir"
   },
   "build": {
     "appId": "com.soundplayer.app",
@@ -27,7 +30,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": false,
       "runAfterFinish": true,
-      "deleteAppDataOnUninstall": true,
+      "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": false,
       "packElevateHelper": false,
       "createStartMenuShortcut": false,
@@ -40,13 +43,8 @@
       "styles.css",
       "app.js",
       "preload.js",
-      "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "node_modules/ffmpeg-static/ffmpeg.exe",
-        "to": "ffmpeg.exe"
-      }
+      "package.json",
+      "file-access.js"
     ],
     "asar": true,
     "compression": "maximum"
@@ -61,11 +59,15 @@
   "author": "",
   "license": "Apache-2.0",
   "dependencies": {
-    "jszip": "^3.10.1",
-    "ffmpeg-static": "^5.2.0"
+    "@fontsource/material-icons": "^5.3.0",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
-    "electron": "^32.0.0",
-    "electron-builder": "^25.0.0"
+    "@playwright/test": "^1.65.0",
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "overrides": {
+    "minimatch": "^11.0.1"
   }
 }

@@ -1,3 +1,8 @@
+// Keep user-controlled names as text even inside template-built controls.
+function escapeHTML(value) {
+    return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 class SoundPlayer {
     constructor() {
         this.audioContext = null;
@@ -18,20 +23,21 @@ class SoundPlayer {
         this.isSeeking = false;
         this.isAutoScrollOn = true; // Auto-scroll enabled by default
         this.activeObjectURLs = new Set(); // Track active blob URLs for cleanup
-        
-        this.initDB().then(() => {
+
+        this.ready = this.initDB().then(async () => {
             this.createDefaultFolder();
             this.setupEventListeners();
-            this.loadState();
+            await this.loadState();
+            this.bindPersistence();
         });
     }
 
     async initDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open('SoundPlayerDB', 1);
-            
+
             request.onerror = () => reject(request.error);
-            
+
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains('files')) {
@@ -41,7 +47,7 @@ class SoundPlayer {
                     db.createObjectStore('state');
                 }
             };
-            
+
             request.onsuccess = (event) => {
                 this.db = event.target.result;
                 resolve();
@@ -67,7 +73,7 @@ class SoundPlayer {
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
         notification.textContent = message;
-        
+
         notification.style.cssText = `
             position: fixed;
             top: 20px;
@@ -79,7 +85,7 @@ class SoundPlayer {
             word-wrap: break-word;
             animation: slideIn 0.3s ease;
         `;
-        
+
         if (type === 'error') {
             notification.style.backgroundColor = '#dc3545';
             notification.style.color = 'white';
@@ -90,9 +96,9 @@ class SoundPlayer {
             notification.style.backgroundColor = '#007bff';
             notification.style.color = 'white';
         }
-        
+
         document.body.appendChild(notification);
-        
+
         setTimeout(() => {
             notification.style.animation = 'slideOut 0.3s ease';
             setTimeout(() => {
@@ -142,106 +148,39 @@ class SoundPlayer {
     }
 
     async handleFileUpload(event) {
-        const files = event.target.files;
-        if (files.length === 0) return;
-
-        // Ensure current folder exists
-        if (!this.folders.has(this.currentFolder)) {
-            this.createDefaultFolder();
-            this.currentFolder = 'all';
-        }
-
-        // Show loading indicator for multiple files
-        let loadingDialog = null;
-        if (files.length > 1) {
-            loadingDialog = this.showSimpleLoading(`Processing ${files.length} files...`);
-        }
-
-        let successCount = 0;
-        let errorCount = 0;
-        
-        Array.from(files).forEach(file => {
-            // Validate file type
-            if (!file.type.startsWith('audio/')) {
-                this.showNotification(`"${file.name}" is not a valid audio file`, 'error');
-                errorCount++;
-                return;
-            }
-
-            const fileId = Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-            const reader = new FileReader();
-            
-            reader.onload = (e) => {
-                try {
-                    // Store file in IndexedDB
-                    const transaction = this.db.transaction(['files'], 'readwrite');
-                    const store = transaction.objectStore('files');
-                    
-                    store.put(e.target.result, fileId).onsuccess = () => {
-                        successCount++;
-                        if (successCount === 1 && errorCount === 0 && files.length === 1) {
-                            this.showNotification(`Added "${file.name}"`, 'success');
-                        } else if (successCount + errorCount === files.length) {
-                            // Close loading dialog
-                            if (loadingDialog && document.body.contains(loadingDialog)) {
-                                document.body.removeChild(loadingDialog);
-                            }
-                            this.showNotification(`Added ${successCount} files${errorCount > 0 ? `, ${errorCount} failed` : ''}`, successCount > errorCount ? 'success' : 'error');
-                        }
-                    };
-                    
-                    store.onerror = () => {
-                        errorCount++;
-                        if (successCount + errorCount === files.length) {
-                            // Close loading dialog
-                            if (loadingDialog && document.body.contains(loadingDialog)) {
-                                document.body.removeChild(loadingDialog);
-                            }
-                        }
-                        this.showNotification(`Failed to save "${file.name}"`, 'error');
-                    };
-                } catch (error) {
-                    errorCount++;
-                    this.showNotification(`Error processing "${file.name}": ${error.message}`, 'error');
-                }
-            };
-            
-            reader.onerror = () => {
-                errorCount++;
-                this.showNotification(`Failed to read "${file.name}"`, 'error');
-            };
-            
-            reader.readAsArrayBuffer(file);
-
-            const objectURL = URL.createObjectURL(file);
-            this.activeObjectURLs.add(objectURL);
-            
-            this.files.set(fileId, {
-                id: fileId,
-                name: file.name,
-                url: objectURL
-            });
-            
-            // Add to current folder
-            const currentFolder = this.folders.get(this.currentFolder);
-            if (!currentFolder.files) {
-                currentFolder.files = new Set();
-            }
-            currentFolder.files.add(fileId);
-
-            // Add to All Files
-            if (this.currentFolder !== 'all') {
-                const allFolder = this.folders.get('all');
-                if (!allFolder.files) {
-                    allFolder.files = new Set();
-                }
-                allFolder.files.add(fileId);
-            }
-        });
-
+        const incoming = Array.from(event.target.files || []);
         event.target.value = '';
-        this.updateFilesList();
-        this.saveState();
+        if (!incoming.length || this.libraryBusy) return;
+        this.libraryBusy = true;
+        document.querySelector('.app-container').inert = true;
+        let added = 0, failed = 0;
+        const loading = incoming.length > 1 ? this.showSimpleLoading(`Importing ${incoming.length} files…`) : null;
+        try {
+            this.createDefaultFolder();
+            if (!this.folders.has(this.currentFolder)) this.currentFolder = 'all';
+            for (const file of incoming) {
+                if (!file.type.startsWith('audio/') && !/\.(mp3|wav|ogg|flac|m4a|aac|opus|aiff?|webm)$/i.test(file.name)) {
+                    failed++; continue;
+                }
+                const id = crypto.randomUUID();
+                try {
+                    // Store the Blob directly; avoid FileReader's extra full-file ArrayBuffer copy.
+                    await this.storeFile(id, file);
+                    this.files.set(id, { id, name: file.name, type: file.type, size: file.size });
+                    this.folders.get(this.currentFolder).files.add(id);
+                    this.folders.get('all').files.add(id);
+                    added++;
+                } catch (error) { failed++; console.warn('Import failed', error.name); }
+                if ((added + failed) % 20 === 0) await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            await this.saveState();
+            this.updateFilesList();
+            this.showNotification(`Added ${added} files${failed ? `; ${failed} unsupported or failed` : ''}`, failed ? 'error' : 'success');
+        } finally {
+            this.libraryBusy = false;
+            document.querySelector('.app-container').inert = false;
+            loading?.remove();
+        }
     }
 
     saveState() {
@@ -253,24 +192,24 @@ class SoundPlayer {
             })),
             files: Array.from(this.files.entries()).map(([id, file]) => ({
                 id,
-                name: file.name
+                name: file.name, type: file.type, size: file.size
             })),
             currentFolder: this.currentFolder,
             currentTrack: this.currentTrack,
             isShuffleOn: this.isShuffleOn,
             isRepeatOneOn: this.isRepeatOneOn,
-            isAutoScrollOn: this.isAutoScrollOn
+            isAutoScrollOn: this.isAutoScrollOn,
+            playbackPosition: this.audioElement.src ? this.audioElement.currentTime : (this.resumePosition || 0),
+            volume: this.audioElement.volume
         };
 
         const transaction = this.db.transaction(['state'], 'readwrite');
         const store = transaction.objectStore('state');
-        
+
         return new Promise((resolve, reject) => {
             const request = store.put(state, 'currentState');
-            request.onsuccess = () => {
-                console.log('State saved successfully');
-                resolve();
-            };
+            transaction.oncomplete = () => resolve();
+            transaction.onabort = () => reject(transaction.error || new Error('State transaction aborted'));
             request.onerror = () => {
                 console.error('Failed to save state:', request.error);
                 reject(request.error);
@@ -279,89 +218,69 @@ class SoundPlayer {
     }
 
     async loadState() {
-        try {
-            const transaction = this.db.transaction(['state', 'files'], 'readonly');
-            const stateStore = transaction.objectStore('state');
-            const filesStore = transaction.objectStore('files');
-
-            const state = await new Promise((resolve) => {
-                stateStore.get('currentState').onsuccess = (event) => {
-                    resolve(event.target.result);
-                };
-            });
-
-            if (state) {
-                // Clear current state
-                this.cleanupAllObjectURLs();
-                this.folders.clear();
-                this.files.clear();
-
-                // Restore folders
-                state.folders.forEach(folder => {
-                    this.folders.set(folder.id, {
-                        name: folder.name,
-                        files: new Set(folder.files || [])
-                    });
-                });
-
-                // Restore files
-                for (const file of state.files) {
-                    const fileData = await new Promise((resolve) => {
-                        filesStore.get(file.id).onsuccess = (event) => {
-                            resolve(event.target.result);
-                        };
-                    });
-
-                    if (fileData) {
-                        const blob = new Blob([fileData]);
-                        const objectURL = URL.createObjectURL(blob);
-                        this.activeObjectURLs.add(objectURL);
-                        
-                        this.files.set(file.id, {
-                            id: file.id,
-                            name: file.name,
-                            url: objectURL
-                        });
-                    }
-                }
-
-                // Restore player state
-                this.currentFolder = state.currentFolder || 'all';
-                this.currentTrack = state.currentTrack || null;
-                this.isShuffleOn = state.isShuffleOn || false;
-                this.isRepeatOneOn = state.isRepeatOneOn || false;
-                this.isAutoScrollOn = state.isAutoScrollOn !== undefined ? state.isAutoScrollOn : true;
-
-                // Update UI
-                this.updateFoldersList();
-                this.updateFilesList();
-                
-                // Update folder name in header
-                const currentFolderElement = document.getElementById('currentFolderName');
-                if (currentFolderElement && this.folders.has(this.currentFolder)) {
-                    currentFolderElement.textContent = this.folders.get(this.currentFolder).name;
-                }
-                
-                // Update controls state
-                document.getElementById('shuffleBtn').classList.toggle('active', this.isShuffleOn);
-                document.getElementById('repeatOneBtn').classList.toggle('active', this.isRepeatOneOn);
-                const autoScrollBtn = document.getElementById('autoScrollBtn');
-                if (autoScrollBtn) {
-                    autoScrollBtn.classList.toggle('active', this.isAutoScrollOn);
-                }
-
-                // If there was a track playing, restore it
-                if (this.currentTrack) {
-                    const file = this.files.get(this.currentTrack);
-                    if (file) {
-                        document.getElementById('currentTrack').textContent = file.name;
-                    }
-                }
-            }
-        } catch (err) {
-            console.warn('Failed to load state:', err);
-            this.createDefaultFolder();
+        const transaction = this.db.transaction('state', 'readonly');
+        const state = await new Promise((resolve, reject) => {
+            const request = transaction.objectStore('state').get('currentState');
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+        if (!state) return;
+        this.cleanupAllObjectURLs();
+        this.files = new Map((state.files || []).map(file => [file.id, { ...file, url: undefined }]));
+        this.folders = new Map((state.folders || []).map(folder => [folder.id, {
+            name: folder.name, files: new Set((folder.files || []).filter(id => this.files.has(id)))
+        }]));
+        this.createDefaultFolder();
+        this.files.forEach((_, id) => this.folders.get('all').files.add(id));
+        this.currentFolder = this.folders.has(state.currentFolder) ? state.currentFolder : 'all';
+        this.currentTrack = this.files.has(state.currentTrack) ? state.currentTrack : null;
+        this.resumePosition = Number.isFinite(state.playbackPosition) ? Math.max(0, state.playbackPosition) : 0;
+        this.audioElement.volume = Number.isFinite(state.volume) ? Math.max(0, Math.min(1, state.volume)) : 1;
+        document.getElementById('volumeSlider').value = this.audioElement.volume * 100;
+        this.isShuffleOn = !!state.isShuffleOn;
+        this.isRepeatOneOn = !!state.isRepeatOneOn;
+        this.isAutoScrollOn = state.isAutoScrollOn !== false;
+        for (const [id, enabled] of [['shuffleBtn', this.isShuffleOn], ['repeatOneBtn', this.isRepeatOneOn], ['autoScrollBtn', this.isAutoScrollOn]]) {
+            document.getElementById(id)?.classList.toggle('active', enabled);
         }
+        this.updateFoldersList();
+        this.updateFilesList();
+        document.getElementById('currentFolderName').textContent = this.folders.get(this.currentFolder).name;
+        document.getElementById('currentTrack').textContent = this.files.get(this.currentTrack)?.name || 'No track selected';
+    }
+
+    bindPersistence() {
+        const save = () => { if (!this.libraryBusy) this.saveState().catch(error => console.warn('State persistence failed', error.name)); };
+        this.audioElement.addEventListener('timeupdate', () => {
+            if (Date.now() - (this.lastPositionSave || 0) > 5000) { this.lastPositionSave = Date.now(); save(); }
+        });
+        for (const event of ['pause', 'seeked', 'volumechange']) this.audioElement.addEventListener(event, save);
+        window.addEventListener('pagehide', save);
+        this.audioElement.addEventListener('error', () => this.showNotification('This audio file could not be played. Try another supported format.', 'error'));
+        this.audioElement.addEventListener('loadedmetadata', () => {
+            if (this.pendingResume > 0 && Number.isFinite(this.audioElement.duration)) {
+                this.audioElement.currentTime = Math.min(this.pendingResume, this.audioElement.duration);
+            }
+            this.pendingResume = 0;
+        });
+        if ('mediaSession' in navigator) {
+            for (const [action, handler] of [['play', () => this.play()], ['pause', () => this.pause()],
+                ['nexttrack', () => this.playNext()], ['previoustrack', () => this.playPrevious()]]) {
+                navigator.mediaSession.setActionHandler(action, handler);
+            }
+        }
+    }
+
+    async ensureAudioURL(fileId) {
+        const file = this.files.get(fileId);
+        if (!file) throw new Error('Track is missing');
+        if (!file.url) {
+            const data = await this.getFile(fileId);
+            if (!data) throw new Error('Audio data is missing; restore a library backup');
+            file.url = URL.createObjectURL(data instanceof Blob ? data : new Blob([data], { type: file.type || '' }));
+            this.activeObjectURLs.add(file.url);
+        }
+        return file.url;
     }
 
     initializeAudioContext() {
@@ -379,7 +298,7 @@ class SoundPlayer {
     setupVisualizer() {
         const canvas = document.getElementById('visualizer');
         const ctx = canvas.getContext('2d');
-        
+
         // Set canvas size to match its display size
         const resizeCanvas = () => {
             const rect = canvas.getBoundingClientRect();
@@ -387,7 +306,7 @@ class SoundPlayer {
             canvas.height = rect.height * window.devicePixelRatio;
             ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
         };
-        
+
         // Resize canvas initially and on window resize
         resizeCanvas();
         window.addEventListener('resize', resizeCanvas);
@@ -429,7 +348,7 @@ class SoundPlayer {
 
     setupEventListeners() {
         console.log('Setting up event listeners...');
-        
+
         // File upload
         const fileUploadBtn = document.getElementById('fileUpload');
         console.log('File upload button:', fileUploadBtn);
@@ -621,7 +540,7 @@ class SoundPlayer {
     handleSearch(query) {
         this.searchQuery = query.toLowerCase().trim();
         const clearSearchBtn = document.getElementById('clearSearch');
-        
+
         if (this.searchQuery) {
             clearSearchBtn.style.display = 'flex';
             this.filterFiles();
@@ -629,14 +548,14 @@ class SoundPlayer {
             clearSearchBtn.style.display = 'none';
             this.filteredFiles.clear();
         }
-        
+
         this.updateFilesList();
     }
 
     filterFiles() {
         this.filteredFiles.clear();
         const folderFiles = this.folders.get(this.currentFolder).files;
-        
+
         folderFiles.forEach(fileId => {
             const file = this.files.get(fileId);
             if (file && file.name.toLowerCase().includes(this.searchQuery)) {
@@ -648,20 +567,20 @@ class SoundPlayer {
     clearSearch() {
         const searchInput = document.getElementById('searchInput');
         const clearSearchBtn = document.getElementById('clearSearch');
-        
+
         searchInput.value = '';
         this.searchQuery = '';
         this.filteredFiles.clear();
         clearSearchBtn.style.display = 'none';
-        
+
         this.updateFilesList();
     }
 
     createDefaultFolder() {
         if (!this.folders.has('all')) {
-            this.folders.set('all', { 
-                name: 'All Files', 
-                files: new Set() 
+            this.folders.set('all', {
+                name: 'All Files',
+                files: new Set()
             });
         }
         this.updateFoldersList();
@@ -680,11 +599,11 @@ class SoundPlayer {
             const folderElement = document.createElement('div');
             folderElement.className = `folder-item ${this.currentFolder === folderId ? 'active' : ''}`;
             folderElement.dataset.folderId = folderId;
-            
+
             folderElement.innerHTML = `
                 <div class="folder-name">
                     <span class="material-icons">folder</span>
-                    ${folder.name}
+                    ${escapeHTML(folder.name)}
                 </div>
                 ${folderId !== 'all' ? `
                     <div class="folder-controls">
@@ -707,25 +626,25 @@ class SoundPlayer {
             if (!folderItem) return;
 
             const folderId = folderItem.dataset.folderId;
-            
+
             // Handle folder control buttons - check for both button and icon clicks
             const renameBtn = e.target.closest('.folder-btn.rename');
             const deleteBtn = e.target.closest('.folder-btn.delete');
-            
+
             if (renameBtn) {
                 e.stopPropagation();
                 e.preventDefault();
                 this.renameFolder(folderId);
                 return;
             }
-            
+
             if (deleteBtn) {
                 e.stopPropagation();
                 e.preventDefault();
                 this.deleteFolder(folderId);
                 return;
             }
-            
+
             // Handle folder selection (only if not clicking on controls)
             if (!e.target.closest('.folder-controls')) {
                 e.preventDefault();
@@ -738,7 +657,7 @@ class SoundPlayer {
     updateFolderActiveStates() {
         const foldersContainer = document.getElementById('folders');
         const folderElements = foldersContainer.querySelectorAll('.folder-item');
-        
+
         folderElements.forEach(folderElement => {
             const folderId = folderElement.dataset.folderId;
             if (folderId === this.currentFolder) {
@@ -798,7 +717,7 @@ class SoundPlayer {
         // Use filtered files if search is active, otherwise use all folder files
         const folderFiles = this.folders.get(this.currentFolder).files;
         const filesToShow = this.searchQuery ? this.filteredFiles : folderFiles;
-        
+
         // Show search results info
         if (this.searchQuery) {
             const searchInfo = document.createElement('div');
@@ -813,7 +732,7 @@ class SoundPlayer {
             `;
             searchInfo.innerHTML = `
                 <span class="material-icons" style="vertical-align: middle; margin-right: 8px; font-size: 18px;">search</span>
-                Found ${filesToShow.size} result${filesToShow.size !== 1 ? 's' : ''} for "${this.searchQuery}"
+                Found ${filesToShow.size} result${filesToShow.size !== 1 ? 's' : ''} for "${escapeHTML(this.searchQuery)}"
             `;
             filesGrid.appendChild(searchInfo);
         }
@@ -829,14 +748,14 @@ class SoundPlayer {
                 <div class="file-content">
                     <div class="file-info">
                         <span class="material-icons">audio_file</span>
-                        <p>${file.name}</p>
+                        <p>${escapeHTML(file.name)}</p>
                     </div>
                     <button class="delete-btn" title="Delete file">
                         <span class="material-icons">delete</span>
                     </button>
                 </div>
             `;
-            
+
             // Add click handler for selection
             fileElement.addEventListener('click', (e) => {
                 if (e.ctrlKey || e.metaKey) {
@@ -893,39 +812,31 @@ class SoundPlayer {
         });
     }
 
-    playFile(fileId) {
+    async playFile(fileId, { history = true } = {}) {
+        const token = this.playRequest = (this.playRequest || 0) + 1;
         try {
             const file = this.files.get(fileId);
-            if (!file) {
-                this.showNotification('File not found', 'error');
-                return;
-            }
-
-            if (!file.url) {
-                this.showNotification('File URL is invalid', 'error');
-                return;
-            }
-
+            if (!file) return;
+            const url = await this.ensureAudioURL(fileId);
+            if (token !== this.playRequest) return;
+            const previous = this.currentTrack;
+            this.pendingResume = previous === fileId ? (this.resumePosition || 0) : 0;
+            this.resumePosition = 0;
+            if (history && previous && previous !== fileId) (this.playHistory ||= []).push(previous);
             this.currentTrack = fileId;
-            this.audioElement.src = file.url;
-            document.getElementById('currentTrack').textContent = file.name;
-            
-            // Update selection to match the currently playing track
-            this.selectedFiles.clear();
-            this.selectedFiles.add(fileId);
-            this.lastSelectedFile = fileId;
-            
-            this.play();
-            this.updateFilesList(); // Update to show which file is playing
-            
-            // Auto-scroll to the current track if enabled
-            if (this.isAutoScrollOn) {
-                // Use setTimeout to ensure the file list is updated first
-                setTimeout(() => this.scrollToCurrentTrack(), 100);
+            this.audioElement.src = url;
+            if (previous && previous !== fileId) {
+                const old = this.files.get(previous);
+                if (old?.url) { this.cleanupObjectURL(old.url); delete old.url; }
             }
-        } catch (error) {
-            this.showNotification(`Failed to play file: ${error.message}`, 'error');
-        }
+            document.getElementById('currentTrack').textContent = file.name;
+            this.selectedFiles = new Set([fileId]);
+            this.lastSelectedFile = fileId;
+            if ('mediaSession' in navigator) navigator.mediaSession.metadata = new MediaMetadata({ title: file.name });
+            this.play();
+            this.updateFilesList();
+            if (this.isAutoScrollOn) setTimeout(() => this.scrollToCurrentTrack(), 0);
+        } catch (error) { this.showNotification(`Unable to play track: ${error.message}`, 'error'); }
     }
 
     togglePlay() {
@@ -937,6 +848,8 @@ class SoundPlayer {
     }
 
     play() {
+        if (!this.audioElement.src && this.currentTrack) return this.playFile(this.currentTrack, { history: false });
+        if (!this.audioElement.src) return;
         if (!this.audioContext) {
             this.initializeAudioContext();
         }
@@ -965,16 +878,17 @@ class SoundPlayer {
 
     playPrevious() {
         if (!this.currentTrack) return;
-        
-        const files = Array.from(this.folders.get(this.currentFolder).files);
-        const currentIndex = files.indexOf(this.currentTrack);
-        const previousIndex = (currentIndex - 1 + files.length) % files.length;
-        this.playFile(files[previousIndex]);
+        while (this.playHistory?.length) {
+            const id = this.playHistory.pop();
+            if (this.files.has(id)) return this.playFile(id, { history: false });
+        }
+        const files = Array.from(this.folders.get(this.currentFolder)?.files || []);
+        if (files.length) this.playFile(files[(files.indexOf(this.currentTrack) - 1 + files.length) % files.length], { history: false });
     }
 
     playNext() {
         if (!this.currentTrack) return;
-        
+
         const files = Array.from(this.folders.get(this.currentFolder).files);
         if (files.length === 0) return;
 
@@ -982,7 +896,7 @@ class SoundPlayer {
             this.playRandomTrack();
             return;
         }
-        
+
         const currentIndex = files.indexOf(this.currentTrack);
         const nextIndex = (currentIndex + 1) % files.length;
         this.playFile(files[nextIndex]);
@@ -1043,26 +957,26 @@ class SoundPlayer {
 
     toggleShuffle() {
         this.isShuffleOn = !this.isShuffleOn;
-        
+
         // If shuffle is being turned on, turn off repeat
         if (this.isShuffleOn && this.isRepeatOneOn) {
             this.isRepeatOneOn = false;
             document.getElementById('repeatOneBtn').classList.remove('active');
         }
-        
+
         document.getElementById('shuffleBtn').classList.toggle('active', this.isShuffleOn);
         this.saveState();
     }
 
     toggleRepeatOne() {
         this.isRepeatOneOn = !this.isRepeatOneOn;
-        
+
         // If repeat is being turned on, turn off shuffle
         if (this.isRepeatOneOn && this.isShuffleOn) {
             this.isShuffleOn = false;
             document.getElementById('shuffleBtn').classList.remove('active');
         }
-        
+
         document.getElementById('repeatOneBtn').classList.toggle('active', this.isRepeatOneOn);
         this.saveState();
     }
@@ -1071,7 +985,7 @@ class SoundPlayer {
         this.isAutoScrollOn = !this.isAutoScrollOn;
         document.getElementById('autoScrollBtn').classList.toggle('active', this.isAutoScrollOn);
         this.saveState();
-        
+
         // If auto-scroll is being turned on and there's a current track, scroll to it
         if (this.isAutoScrollOn && this.currentTrack) {
             this.scrollToCurrentTrack();
@@ -1080,10 +994,10 @@ class SoundPlayer {
 
     scrollToCurrentTrack() {
         if (!this.currentTrack) return;
-        
+
         const filesGrid = document.getElementById('filesGrid');
         const currentTrackElement = filesGrid.querySelector(`[data-file-id="${this.currentTrack}"]`);
-        
+
         if (currentTrackElement) {
             currentTrackElement.scrollIntoView({
                 behavior: 'smooth',
@@ -1105,11 +1019,18 @@ class SoundPlayer {
     }
 
     playRandomTrack() {
-        const files = Array.from(this.folders.get(this.currentFolder).files);
-        if (files.length === 0) return;
-        
-        const randomIndex = Math.floor(Math.random() * files.length);
-        this.playFile(files[randomIndex]);
+        const candidates = Array.from(this.folders.get(this.currentFolder)?.files || []).filter(id => id !== this.currentTrack);
+        if (!candidates.length) return;
+        const folderKey = this.currentFolder + ':' + Array.from(this.folders.get(this.currentFolder).files).sort().join(',');
+        if (this.shuffleKey !== folderKey || !this.shuffleBag?.length) {
+            this.shuffleBag = candidates.slice();
+            for (let i = this.shuffleBag.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [this.shuffleBag[i], this.shuffleBag[j]] = [this.shuffleBag[j], this.shuffleBag[i]];
+            }
+            this.shuffleKey = folderKey;
+        }
+        this.playFile(this.shuffleBag.pop());
     }
 
     showInputDialog(title, placeholder = '', initialValue = '') {
@@ -1143,17 +1064,17 @@ class SoundPlayer {
             `;
 
             dialog.innerHTML = `
-                <h3 style="margin-top: 0; margin-bottom: 16px; color: white;">${title}</h3>
-                <input type="text" value="${initialValue}" placeholder="${placeholder}"
-                    style="width: 100%; padding: 12px; border-radius: 4px; border: 1px solid #444; 
+                <h3 style="margin-top: 0; margin-bottom: 16px; color: white;">${escapeHTML(title)}</h3>
+                <input type="text" value="${escapeHTML(initialValue)}" placeholder="${escapeHTML(placeholder)}"
+                    style="width: 100%; padding: 12px; border-radius: 4px; border: 1px solid #444;
                     background: #222; color: white; margin-bottom: 16px; font-size: 14px;
                     outline: none; box-sizing: border-box;">
                 <div style="display: flex; justify-content: flex-end; gap: 8px;">
-                    <button class="cancel-btn" 
-                        style="padding: 10px 20px; border-radius: 4px; border: none; 
+                    <button class="cancel-btn"
+                        style="padding: 10px 20px; border-radius: 4px; border: none;
                         background: #666; color: white; cursor: pointer; font-size: 14px;">Cancel</button>
-                    <button class="confirm-btn" 
-                        style="padding: 10px 20px; border-radius: 4px; border: none; 
+                    <button class="confirm-btn"
+                        style="padding: 10px 20px; border-radius: 4px; border: none;
                         background: #2196f3; color: white; cursor: pointer; font-size: 14px;">OK</button>
                 </div>
             `;
@@ -1161,7 +1082,7 @@ class SoundPlayer {
             backdrop.appendChild(dialog);
 
             const input = dialog.querySelector('input');
-            
+
             const cleanup = () => {
                 if (backdrop.parentNode) {
                     document.body.removeChild(backdrop);
@@ -1199,7 +1120,7 @@ class SoundPlayer {
             });
 
             document.body.appendChild(backdrop);
-            
+
             // Focus the input after a short delay to ensure it's rendered
             setTimeout(() => {
                 input.focus();
@@ -1212,16 +1133,16 @@ class SoundPlayer {
         console.log('Creating new folder...');
         const folderName = await this.showInputDialog('Create New Folder', 'Enter folder name');
         console.log('Folder name:', folderName);
-        
+
         if (folderName) {
             const folderId = 'folder_' + Date.now();
             console.log('Creating folder with ID:', folderId);
-            
-            this.folders.set(folderId, { 
-                name: folderName, 
-                files: new Set() 
+
+            this.folders.set(folderId, {
+                name: folderName,
+                files: new Set()
             });
-            
+
             console.log('Current folders:', this.folders);
             this.updateFoldersList();
             this.switchFolder(folderId);
@@ -1377,14 +1298,14 @@ class SoundPlayer {
 
         try {
             // Show save dialog immediately
-            const result = await window.electron.showSaveDialog({
+            const result = await window.electronAPI.showSaveDialog({
                 title: 'Save Library',
                 defaultPath: 'soundplayer-library.zip',
                 filters: [
                     { name: 'ZIP Files', extensions: ['zip'] }
                 ]
             });
-            
+
             if (!result) return; // User cancelled
             const savePath = result;
 
@@ -1417,8 +1338,10 @@ class SoundPlayer {
 
             let processed = 0;
             const total = uniqueFileIds.size;
+            if (total > 20000) throw new Error('Library exceeds the 20,000-track restore limit');
+            let uncompressedBytes = 0;
             console.log(`Saving ${total} unique files...`);
-            
+
             for (const fileId of uniqueFileIds) {
                 if (abortController.signal.aborted) {
                     throw new Error('Operation cancelled');
@@ -1427,16 +1350,19 @@ class SoundPlayer {
                 try {
                     const fileInfo = this.files.get(fileId);
                     if (!fileInfo) {
-                        console.warn(`File info not found for ID: ${fileId}`);
-                        continue;
+                        throw new Error('Track metadata is missing');
                     }
 
                     processed++;
                     loadingDialog.updateMessage(`Preparing library for download... (${processed}/${total} files)`);
 
                     const fileData = await this.getFile(fileId);
+                    if (!fileData) throw new Error('Stored audio is missing');
+                    const bytes = fileData.size ?? fileData.byteLength;
+                    uncompressedBytes += bytes;
+                    if (bytes > 512 * 1024 ** 2 || uncompressedBytes > 2 * 1024 ** 3) throw new Error('Library exceeds the documented restore size limits');
                     if (fileData) {
-                        zip.file(fileId, fileData);
+                        zip.file(fileId, fileData instanceof Blob ? await fileData.arrayBuffer() : fileData);
                         metadata.fileInfo.push({
                             id: fileId,
                             name: fileInfo.name
@@ -1444,7 +1370,7 @@ class SoundPlayer {
                     }
                 } catch (err) {
                     if (abortController.signal.aborted) throw err;
-                    console.warn(`Failed to add file ${fileId} to zip:`, err);
+                    throw new Error(`Could not export track: ${err.message}`);
                 }
             }
 
@@ -1453,7 +1379,7 @@ class SoundPlayer {
             loadingDialog.updateMessage('Compressing library...');
             const content = await zip.generateAsync({
                 type: 'arraybuffer',
-                compression: 'DEFLATE',
+                compression: 'STORE',
                 compressionOptions: {
                     level: 5
                 }
@@ -1462,11 +1388,12 @@ class SoundPlayer {
                 loadingDialog.updateMessage(`Compressing library... ${metadata.percent.toFixed(0)}%`);
             });
 
+            if (content.byteLength > 2 * 1024 ** 3) throw new Error('ZIP archive exceeds the 2 GB library limit');
             // Save using Electron
-            await window.electron.saveFile(savePath, content);
+            await window.electronAPI.saveFile(savePath, content);
 
             document.body.removeChild(loadingDialog.dialog);
-            alert('Library saved successfully to ' + savePath);
+            this.showNotification('Library saved successfully', 'success');
         } catch (err) {
             if (loadingDialog && loadingDialog.dialog.parentNode) {
                 document.body.removeChild(loadingDialog.dialog);
@@ -1483,115 +1410,86 @@ class SoundPlayer {
             const transaction = this.db.transaction(['files'], 'readonly');
             const store = transaction.objectStore('files');
             const request = store.get(fileId);
-            
+
             request.onsuccess = () => resolve(request.result);
             request.onerror = () => reject(request.error);
         });
     }
 
     async loadFromFile() {
-        let abortController = new AbortController();
-        let loadingDialog = null;
-
+        if (this.libraryBusy) return;
+        this.libraryBusy = true;
+        document.querySelector('.app-container').inert = true;
+        const staged = [];
+        let loading;
         try {
-            // Show open dialog immediately
-            const filePath = await window.electron.showOpenDialog({
-                title: 'Load Library',
-                filters: [
-                    { name: 'ZIP Files', extensions: ['zip'] }
-                ],
-                properties: ['openFile']
+            const filePath = await window.electronAPI.showOpenDialog();
+            if (!filePath) return;
+            loading = await this.showLoadingDialog('Validating library…');
+            let cancelled = false;
+            loading.cancelBtn.addEventListener('click', () => { cancelled = true; });
+            const zip = await JSZip.loadAsync(await window.electronAPI.loadFile(filePath));
+            const entry = zip.file('metadata.json');
+            if (!entry || entry._data?.uncompressedSize > 5 * 1024 ** 2) throw new Error('Invalid library metadata');
+            const metadata = JSON.parse(await entry.async('string'));
+            if (!Array.isArray(metadata.folders) || !Array.isArray(metadata.fileInfo) || metadata.fileInfo.length > 20000) throw new Error('Invalid library structure');
+            const ids = new Set();
+            let total = 0;
+            for (const file of metadata.fileInfo) {
+                if (typeof file.id !== 'string' || !file.id || typeof file.name !== 'string' || ids.has(file.id)) throw new Error('Invalid or duplicate track');
+                const audio = zip.file(file.id);
+                if (!audio || audio._data?.uncompressedSize > 512 * 1024 ** 2) throw new Error('Missing or oversized audio entry');
+                total += audio._data?.uncompressedSize || 0;
+                if (total > 2 * 1024 ** 3) throw new Error('Library expands beyond 2 GB');
+                ids.add(file.id);
+            }
+            const folderIds = new Set();
+            for (const folder of metadata.folders) {
+                if (typeof folder.id !== 'string' || folderIds.has(folder.id) || typeof folder.name !== 'string' || !Array.isArray(folder.files) || folder.files.some(id => !ids.has(id))) throw new Error('Invalid folder metadata');
+                folderIds.add(folder.id);
+            }
+            const mapping = new Map();
+            const files = [];
+            for (const file of metadata.fileInfo) {
+                if (cancelled) throw new Error('Operation cancelled');
+                const id = crypto.randomUUID();
+                const blob = await zip.file(file.id).async('blob');
+                await this.storeFile(id, blob);
+                staged.push(id);
+                mapping.set(file.id, id);
+                files.push({ id, name: file.name, size: blob.size });
+                loading.updateMessage(`Loading library (${files.length}/${metadata.fileInfo.length})…`);
+            }
+            if (cancelled) throw new Error('Operation cancelled');
+            const folders = metadata.folders.map(folder => ({ id: folder.id, name: folder.name, files: folder.files.map(id => mapping.get(id)) }));
+            const all = folders.find(folder => folder.id === 'all');
+            if (all) all.files = files.map(file => file.id);
+            else folders.unshift({ id: 'all', name: 'All Files', files: files.map(file => file.id) });
+            // Commit state replacement and old audio removal together; failure keeps the previous library intact.
+            const transaction = this.db.transaction(['files', 'state'], 'readwrite');
+            const oldFiles = transaction.objectStore('files');
+            for (const id of this.files.keys()) oldFiles.delete(id);
+            transaction.objectStore('state').put({ folders, files, currentFolder: 'all', currentTrack: null, volume: this.audioElement.volume }, 'currentState');
+            await new Promise((resolve, reject) => {
+                transaction.oncomplete = resolve;
+                transaction.onabort = () => reject(transaction.error || new Error('Restore transaction aborted'));
+                transaction.onerror = () => reject(transaction.error);
             });
-
-            if (!filePath) return; // User cancelled
-
-            loadingDialog = await this.showLoadingDialog('Loading library...');
-            loadingDialog.cancelBtn.addEventListener('click', () => {
-                abortController.abort();
-                document.body.removeChild(loadingDialog.dialog);
-                alert('Load operation cancelled');
-            });
-
-            // Load file using Electron
-            const fileData = await window.electron.loadFile(filePath);
-            const zipData = await JSZip.loadAsync(fileData);
-
-            if (abortController.signal.aborted) throw new Error('Operation cancelled');
-
-            const metadataJson = await zipData.file('metadata.json').async('string');
-            const metadata = JSON.parse(metadataJson);
-
-            // Clear current state
-            this.cleanupAllObjectURLs();
-            this.folders.clear();
-            this.files.clear();
-            await this.clearDatabase();
-
-            // Create default folder first
-            this.createDefaultFolder();
-            this.currentFolder = 'all';
-
-            // Restore folders
-            metadata.folders.forEach(folder => {
-                this.folders.set(folder.id, {
-                    name: folder.name,
-                    files: new Set(folder.files || [])
-                });
-            });
-
-            // Restore files
-            let processed = 0;
-            const total = metadata.fileInfo.length;
-            
-            for (const fileInfo of metadata.fileInfo) {
-                if (abortController.signal.aborted) throw new Error('Operation cancelled');
-
-                try {
-                    processed++;
-                    loadingDialog.updateMessage(`Loading library... (${processed}/${total} files)`);
-
-                    const fileData = await zipData.file(fileInfo.id).async('arraybuffer');
-                    await this.storeFile(fileInfo.id, fileData);
-
-                    const blob = new Blob([fileData]);
-                    const url = URL.createObjectURL(blob);
-                    
-                    this.files.set(fileInfo.id, {
-                        id: fileInfo.id,
-                        name: fileInfo.name,
-                        url: url
-                    });
-
-                    const allFolder = this.folders.get('all');
-                    if (allFolder && !allFolder.files.has(fileInfo.id)) {
-                        allFolder.files.add(fileInfo.id);
-                    }
-                } catch (err) {
-                    if (abortController.signal.aborted) throw err;
-                    console.warn(`Failed to load file ${fileInfo.name}:`, err);
-                }
+            staged.length = 0;
+            this.audioElement.pause();
+            this.audioElement.removeAttribute('src');
+            this.audioElement.load();
+            this.isPlaying = false;
+            document.getElementById('playBtn').innerHTML = '<span class="material-icons">play_arrow</span>';
+            await this.loadState();
+            this.showNotification('Library restored successfully', 'success');
+        } catch (error) {
+            for (const id of staged) {
+                const tx = this.db.transaction('files', 'readwrite');
+                tx.objectStore('files').delete(id);
             }
-
-            document.body.removeChild(loadingDialog.dialog);
-
-            this.updateFoldersList();
-            this.updateFilesList();
-            
-            const currentFolderName = document.getElementById('currentFolderName');
-            if (currentFolderName) {
-                currentFolderName.textContent = this.folders.get(this.currentFolder).name;
-            }
-
-            alert('Library loaded successfully!');
-        } catch (err) {
-            if (loadingDialog && loadingDialog.dialog.parentNode) {
-                document.body.removeChild(loadingDialog.dialog);
-            }
-            if (err.message !== 'Operation cancelled') {
-                console.error('Failed to load library:', err);
-                alert('Failed to load library: ' + err.message);
-            }
-        }
+            if (error.message !== 'Operation cancelled') this.showNotification(`Library not restored: ${error.message}`, 'error');
+        } finally { loading?.dialog.remove(); this.libraryBusy = false; document.querySelector('.app-container').inert = false; }
     }
 
     async clearDatabase() {
@@ -1599,7 +1497,7 @@ class SoundPlayer {
             const transaction = this.db.transaction(['files'], 'readwrite');
             const store = transaction.objectStore('files');
             const request = store.clear();
-            
+
             request.onsuccess = () => resolve();
             request.onerror = () => reject(request.error);
         });
@@ -1607,12 +1505,11 @@ class SoundPlayer {
 
     async storeFile(fileId, fileData) {
         return new Promise((resolve, reject) => {
-            const transaction = this.db.transaction(['files'], 'readwrite');
-            const store = transaction.objectStore('files');
-            const request = store.put(fileData, fileId);
-            
-            request.onsuccess = () => resolve();
-            request.onerror = () => reject(request.error);
+            const transaction = this.db.transaction('files', 'readwrite');
+            transaction.objectStore('files').put(fileData, fileId);
+            transaction.oncomplete = resolve;
+            transaction.onabort = () => reject(transaction.error || new Error('Audio storage failed'));
+            transaction.onerror = () => reject(transaction.error);
         });
     }
 
@@ -1635,7 +1532,7 @@ class SoundPlayer {
 
     async clearAll() {
         const loadingDialog = this.showSimpleLoading('Clearing all data...');
-        
+
         try {
             // Stop playback
             if (this.isPlaying) {
@@ -1656,11 +1553,12 @@ class SoundPlayer {
             // Reset to default state
             this.createDefaultFolder();
             this.currentFolder = 'all';
-            
+
             // Update UI
             this.updateFoldersList();
             this.updateFilesList();
-            
+
+            await this.saveState();
             this.showNotification('All data cleared successfully', 'success');
         } catch (error) {
             this.showNotification(`Failed to clear data: ${error.message}`, 'error');
@@ -1676,4 +1574,4 @@ class SoundPlayer {
 // Initialize the sound player when the page loads
 window.addEventListener('load', () => {
     window.soundPlayer = new SoundPlayer();
-}); 
+});
