@@ -1338,6 +1338,8 @@ class SoundPlayer {
 
             let processed = 0;
             const total = uniqueFileIds.size;
+            if (total > 20000) throw new Error('Library exceeds the 20,000-track restore limit');
+            let uncompressedBytes = 0;
             console.log(`Saving ${total} unique files...`);
 
             for (const fileId of uniqueFileIds) {
@@ -1348,14 +1350,17 @@ class SoundPlayer {
                 try {
                     const fileInfo = this.files.get(fileId);
                     if (!fileInfo) {
-                        console.warn(`File info not found for ID: ${fileId}`);
-                        continue;
+                        throw new Error('Track metadata is missing');
                     }
 
                     processed++;
                     loadingDialog.updateMessage(`Preparing library for download... (${processed}/${total} files)`);
 
                     const fileData = await this.getFile(fileId);
+                    if (!fileData) throw new Error('Stored audio is missing');
+                    const bytes = fileData.size ?? fileData.byteLength;
+                    uncompressedBytes += bytes;
+                    if (bytes > 512 * 1024 ** 2 || uncompressedBytes > 2 * 1024 ** 3) throw new Error('Library exceeds the documented restore size limits');
                     if (fileData) {
                         zip.file(fileId, fileData instanceof Blob ? await fileData.arrayBuffer() : fileData);
                         metadata.fileInfo.push({
@@ -1365,7 +1370,7 @@ class SoundPlayer {
                     }
                 } catch (err) {
                     if (abortController.signal.aborted) throw err;
-                    console.warn(`Failed to add file ${fileId} to zip:`, err);
+                    throw new Error(`Could not export track: ${err.message}`);
                 }
             }
 
@@ -1383,6 +1388,7 @@ class SoundPlayer {
                 loadingDialog.updateMessage(`Compressing library... ${metadata.percent.toFixed(0)}%`);
             });
 
+            if (content.byteLength > 2 * 1024 ** 3) throw new Error('ZIP archive exceeds the 2 GB library limit');
             // Save using Electron
             await window.electronAPI.saveFile(savePath, content);
 

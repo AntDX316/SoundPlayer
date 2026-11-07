@@ -154,3 +154,11 @@ test('packaged assets load offline without remote scripts', async () => {
     await page.evaluate(() => document.fonts.ready);
     expect(await page.evaluate(() => document.fonts.check('24px "Material Icons"'))).toBe(true);
 });
+
+
+test('failed export preserves an existing destination instead of writing a partial backup', async () => {
+    await importTracks(); const target=path.join(directory,'existing.zip'); await fs.writeFile(target,'original-backup');
+    await app.evaluate(({dialog},target)=>{dialog.showSaveDialog=async()=>({canceled:false,filePath:target});},target);
+    await page.evaluate(async()=>{const p=soundPlayer,original=p.getFile.bind(p);p.getFile=async()=>undefined;await p.saveToFile();p.getFile=original;});
+    expect((await fs.readFile(target)).toString()).toBe('original-backup');
+});
