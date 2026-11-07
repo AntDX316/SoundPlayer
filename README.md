@@ -1,5 +1,7 @@
 # SoundPlayer 🎵
 
+![SoundPlayer preview](screenshot.png)
+
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Electron](https://img.shields.io/badge/Electron-Latest-blue.svg)](https://www.electronjs.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-v24+-green.svg)](https://nodejs.org/)
@@ -11,8 +13,6 @@ This cross-platform application offers intuitive playlist management, smart fold
 With its beautiful dark theme interface and responsive design, SoundPlayer makes managing and enjoying your music collection a breeze.
 
 Whether you're organizing your library, creating custom playlists, or just enjoying your favorite tracks with crystal-clear audio playback, SoundPlayer provides all the tools you need in an elegant, easy-to-use package.
-
-![SoundPlayer Screenshot](screenshot.png)
 
 ## Version 1.1.1
 
