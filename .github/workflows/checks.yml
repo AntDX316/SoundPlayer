@@ -1,4 +1,4 @@
-name: Sound Player checks
+name: SoundPlayer checks
 on:
   pull_request:
   push:
@@ -26,4 +26,4 @@ jobs:
       - name: Test packaged executable
         run: npm test
         env:
-          SOUNDPLAYER_EXECUTABLE: '${{ github.workspace }}\dist\win-unpacked\Sound Player.exe'
+          SOUNDPLAYER_EXECUTABLE: '${{ github.workspace }}\dist\win-unpacked\SoundPlayer.exe'

@@ -18,7 +18,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Architecture
 
-Sound Player is an Electron-based desktop audio player with the following structure:
+SoundPlayer is an Electron-based desktop audio player with the following structure:
 
 - **main.js** - Electron main process, handles window creation, native dialogs, file I/O via IPC
 - **index.html** - Main UI structure with sidebar (folders/controls) and main content area

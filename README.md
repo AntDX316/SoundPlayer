@@ -1,18 +1,22 @@
-# Sound Player 🎵
+# SoundPlayer 🎵
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Electron](https://img.shields.io/badge/Electron-Latest-blue.svg)](https://www.electronjs.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-v24+-green.svg)](https://nodejs.org/)
 
-Sound Player is a sleek, modern audio player that brings your music to life with stunning spectrum visualization.
+SoundPlayer is a sleek, modern audio player that brings your music to life with stunning spectrum visualization.
 
 This cross-platform application offers intuitive playlist management, smart folder organization, and essential playback features like shuffle and repeat.
 
-With its beautiful dark theme interface and responsive design, Sound Player makes managing and enjoying your music collection a breeze.
+With its beautiful dark theme interface and responsive design, SoundPlayer makes managing and enjoying your music collection a breeze.
 
-Whether you're organizing your library, creating custom playlists, or just enjoying your favorite tracks with crystal-clear audio playback, Sound Player provides all the tools you need in an elegant, easy-to-use package.
+Whether you're organizing your library, creating custom playlists, or just enjoying your favorite tracks with crystal-clear audio playback, SoundPlayer provides all the tools you need in an elegant, easy-to-use package.
 
-![Sound Player Screenshot](screenshot.png)
+![SoundPlayer Screenshot](screenshot.png)
+
+## Version 1.1.1
+
+Renamed the repository and desktop branding to SoundPlayer. Existing library profiles and installer identity are preserved.
 
 ## Version 1.1 improvements
 
@@ -72,8 +76,8 @@ Integration tests use isolated temporary profiles, never your normal library. Th
 
 ```bash
 # Clone the repository
-git clone https://github.com/AntDX316/SoundPlayer-Cursor.git
-cd SoundPlayer-Cursor
+git clone https://github.com/AntDX316/SoundPlayer.git
+cd SoundPlayer
 
 # Install dependencies
 npm install
@@ -170,5 +174,5 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🙏 Acknowledgments
 
-- Thanks to all contributors who have helped shape Sound Player
+- Thanks to all contributors who have helped shape SoundPlayer
 - Built with [Electron](https://www.electronjs.org/)
