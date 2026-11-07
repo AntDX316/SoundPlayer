@@ -1,20 +1,39 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const fs = require('fs').promises;
+const { pathToFileURL } = require('node:url');
+const { FileAccess } = require('./file-access');
+const access = new FileAccess();
+if (process.env.SOUNDPLAYER_TEST_PROFILE) app.setPath('userData', process.env.SOUNDPLAYER_TEST_PROFILE);
+const trustedURL = pathToFileURL(path.join(__dirname, 'index.html')).href;
 
 function createWindow() {
     const win = new BrowserWindow({
+        show: !process.env.SOUNDPLAYER_TEST_PROFILE,
         width: 1200,
         height: 800,
         webPreferences: {
+            sandbox: true,
             nodeIntegration: false,
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js')
         }
     });
 
-    win.loadFile('index.html');
-    
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    win.webContents.on('will-navigate', event => event.preventDefault());
+    win.loadFile(path.join(__dirname, 'index.html'));
+    let closing = false;
+    win.on('close', event => {
+        if (closing || win.webContents.isDestroyed()) return;
+        event.preventDefault();
+        closing = true;
+        Promise.race([
+            win.webContents.executeJavaScript('window.soundPlayer && !window.soundPlayer.libraryBusy ? window.soundPlayer.saveState() : null').catch(() => {}),
+            new Promise(resolve => setTimeout(resolve, 1500))
+        ]).finally(() => { if (!win.isDestroyed()) win.close(); });
+    });
+
+
     // Create menu
     createMenu();
 }
@@ -67,7 +86,7 @@ function createMenu() {
                 }
             ]
         });
-        
+
         // Remove About from Help menu on macOS since it's in the app menu
         template[2].submenu = template[2].submenu.filter(item => item.label !== 'About Sound Player');
     }
@@ -81,7 +100,7 @@ function showAboutDialog() {
         type: 'info',
         title: 'About Sound Player',
         message: 'Sound Player',
-        detail: `Version: 1.0.0\n\nA modern audio player with spectrum visualization and library management.\n\nCreated by @AntDX316\nTwitter/X: https://x.com/AntDX316\n\nBuilt with Electron and Web Technologies\n\n© 2024 Sound Player`,
+        detail: `Version: ${app.getVersion()}\n\nA modern audio player with spectrum visualization and library management.\n\nCreated by @AntDX316\nTwitter/X: https://x.com/AntDX316\n\nBuilt with Electron and Web Technologies\n\nÂ© 2024 Sound Player`,
         buttons: ['OK'],
         defaultId: 0
     });
@@ -103,51 +122,26 @@ app.on('window-all-closed', () => {
     }
 });
 
-// Handle file operations
-ipcMain.handle('save-file', async (event, filePath, data) => {
-    try {
-        await fs.writeFile(filePath, Buffer.from(data));
-        return true;
-    } catch (err) {
-        console.error('Failed to save file:', err);
-        throw err;
+// Restrict privileged calls to this application's top-level renderer.
+function trusted(event) {
+    if (event.senderFrame !== event.sender.mainFrame || event.senderFrame.url !== trustedURL) {
+        throw new Error('Untrusted IPC sender');
     }
-});
-
-ipcMain.handle('load-file', async (event, filePath) => {
-    try {
-        const data = await fs.readFile(filePath);
-        return data;
-    } catch (err) {
-        console.error('Failed to load file:', err);
-        throw err;
-    }
-});
-
-ipcMain.handle('show-save-dialog', async (event, options) => {
-    const result = await dialog.showSaveDialog(options);
-    return result.filePath;
-});
-
-ipcMain.handle('show-open-dialog', async (event, options) => {
-    const result = await dialog.showOpenDialog(options);
-    return result.filePaths[0];
-});
-
-// Add directory browse dialog handler
-ipcMain.handle('show-directory-dialog', async (event) => {
-    const result = await dialog.showOpenDialog({
-        properties: ['openDirectory']
+}
+ipcMain.handle('show-save-dialog', async event => {
+    trusted(event);
+    const result = await dialog.showSaveDialog(BrowserWindow.fromWebContents(event.sender), {
+        title: 'Save Library', defaultPath: 'soundplayer-library.zip',
+        filters: [{ name: 'ZIP Libraries', extensions: ['zip'] }]
     });
-    return result.filePaths[0];
+    return result.canceled ? undefined : access.grant(result.filePath, 'write');
 });
-
-// Add file existence check handler
-ipcMain.handle('check-file-exists', async (event, filePath) => {
-    try {
-        await fs.access(filePath);
-        return true;
-    } catch {
-        return false;
-    }
-}); 
+ipcMain.handle('show-open-dialog', async event => {
+    trusted(event);
+    const result = await dialog.showOpenDialog(BrowserWindow.fromWebContents(event.sender), {
+        title: 'Load Library', properties: ['openFile'], filters: [{ name: 'ZIP Libraries', extensions: ['zip'] }]
+    });
+    return result.canceled ? undefined : access.grant(result.filePaths[0], 'read');
+});
+ipcMain.handle('save-file', async (event, file, data) => { trusted(event); return access.write(file, data); });
+ipcMain.handle('load-file', async (event, file) => { trusted(event); return access.read(file); });

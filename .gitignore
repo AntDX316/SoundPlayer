@@ -33,4 +33,7 @@ Thumbs.db
 .Spotlight-V100
 .Trashes
 ehthumbs.db
-Desktop.ini 
+Desktop.ini
+# Automated test artifacts
+test-results/
+playwright-report/

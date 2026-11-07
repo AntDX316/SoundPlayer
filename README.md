@@ -2,7 +2,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Electron](https://img.shields.io/badge/Electron-Latest-blue.svg)](https://www.electronjs.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-v14+-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-v24+-green.svg)](https://nodejs.org/)
 
 Sound Player is a sleek, modern audio player that brings your music to life with stunning spectrum visualization.
 
@@ -13,6 +13,30 @@ With its beautiful dark theme interface and responsive design, Sound Player make
 Whether you're organizing your library, creating custom playlists, or just enjoying your favorite tracks with crystal-clear audio playback, Sound Player provides all the tools you need in an elegant, easy-to-use package.
 
 ![Sound Player Screenshot](screenshot.png)
+
+## Version 1.1 improvements
+
+Library startup now restores metadata only and reads audio when selected. Existing ArrayBuffer libraries remain compatible without a destructive migration. Imports store Blobs directly, and portable ZIP exports include audio and folders without recompressing media. Audio is still copied into app storage; native file-reference mode is not included.
+
+Restores validate metadata and audio entries, stage incoming files, and atomically replace the prior library. Invalid or cancelled restores preserve existing data. Limits: 20,000 tracks, 512 MiB per track, 2 GiB total uncompressed audio, and 5 MiB metadata. Save/load a ZIP backup before replacing a library. This version preserves app data on uninstall; older uninstallers may still delete their application data.
+
+Volume and position persist, and tracks resume when you press Play without autoplay. Shuffle avoids repeats within a cycle; Previous follows session playback history. Media-session actions support system playback controls where available. JSZip and icon fonts are bundled for offline use. User labels are escaped, IPC senders are validated, and file access is restricted to native-dialog-selected ZIPs with atomic output replacement.
+
+Electron and build dependencies were updated; unused FFmpeg packaging was removed. The Windows installer is unsigned unless a certificate is configured. macOS/Linux packaging remains available but was not validated in this Windows update.
+
+### Measured library restoration
+
+On a synthetic 64-track, 64 MiB library, three trials per version on the same Windows machine and Electron 45.2.3 runtime gave median library-state restoration of **124.1 ms before and 1.4 ms after**. Startup audio reads fell from 64 MiB/64 requests to zero. This measures the restoration step, not total startup; audio reads now happen on selection.
+
+```bash
+npm ci
+npm run test:unit
+npm test
+node tests/benchmark.cjs 8ae4c94236752a4cb56529beea0582716e38f53f
+npm run build:win
+```
+
+Integration tests use isolated temporary profiles, never your normal library. The same tests can target the packaged executable by setting `SOUNDPLAYER_EXECUTABLE` to its absolute path. The Windows CI workflow runs both development and packaged tests.
 
 ## ✨ Features
 
@@ -30,7 +54,7 @@ Whether you're organizing your library, creating custom playlists, or just enjoy
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v14 or higher)
+- [Node.js](https://nodejs.org/) (v24 or higher)
 - npm (comes with Node.js)
 
 ### Installation
@@ -48,8 +72,8 @@ Whether you're organizing your library, creating custom playlists, or just enjoy
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/soundplayer.git
-cd soundplayer
+git clone https://github.com/AntDX316/SoundPlayer-Cursor.git
+cd SoundPlayer-Cursor
 
 # Install dependencies
 npm install
@@ -101,7 +125,7 @@ npm run build
 7. **Save/Load Library**
    - Save: Click SAVE button to store your library organization
    - Load: Click LOAD button to restore a previously saved library
-   - Note: The library saves file references, not the actual audio files
+   - Note: ZIP backups include audio and folder metadata
 
 8. **Application Menu**
    - **File Menu**: Access application controls and exit options
