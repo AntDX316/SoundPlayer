@@ -1,7 +1,7 @@
 {
   "name": "soundplayer",
-  "version": "1.1.0",
-  "description": "A modern sound player with spectrum analyzer and library management",
+  "version": "1.1.1",
+  "description": "Desktop audio player with spectrum visualization, library management, safe ZIP backups and playback resume",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,7 +16,7 @@
   },
   "build": {
     "appId": "com.soundplayer.app",
-    "productName": "Sound Player",
+    "productName": "SoundPlayer",
     "directories": {
       "output": "dist"
     },
@@ -69,5 +69,13 @@
   },
   "overrides": {
     "minimatch": "^11.0.1"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AntDX316/SoundPlayer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AntDX316/SoundPlayer/issues"
+  },
+  "homepage": "https://github.com/AntDX316/SoundPlayer#readme"
 }

@@ -3,6 +3,10 @@ const path = require('path');
 const { pathToFileURL } = require('node:url');
 const { FileAccess } = require('./file-access');
 const access = new FileAccess();
+// Keep the existing library profile while updating the visible application name.
+const existingUserData = app.getPath('userData');
+app.setName('SoundPlayer');
+app.setPath('userData', existingUserData);
 if (process.env.SOUNDPLAYER_TEST_PROFILE) app.setPath('userData', process.env.SOUNDPLAYER_TEST_PROFILE);
 const trustedURL = pathToFileURL(path.join(__dirname, 'index.html')).href;
 
@@ -56,7 +60,7 @@ function createMenu() {
             label: 'Help',
             submenu: [
                 {
-                    label: 'About Sound Player',
+                    label: 'About SoundPlayer',
                     click: () => {
                         showAboutDialog();
                     }
@@ -71,7 +75,7 @@ function createMenu() {
             label: app.getName(),
             submenu: [
                 {
-                    label: 'About Sound Player',
+                    label: 'About SoundPlayer',
                     click: () => {
                         showAboutDialog();
                     }
@@ -88,7 +92,7 @@ function createMenu() {
         });
 
         // Remove About from Help menu on macOS since it's in the app menu
-        template[2].submenu = template[2].submenu.filter(item => item.label !== 'About Sound Player');
+        template[2].submenu = template[2].submenu.filter(item => item.label !== 'About SoundPlayer');
     }
 
     const menu = Menu.buildFromTemplate(template);
@@ -98,9 +102,9 @@ function createMenu() {
 function showAboutDialog() {
     dialog.showMessageBox({
         type: 'info',
-        title: 'About Sound Player',
-        message: 'Sound Player',
-        detail: `Version: ${app.getVersion()}\n\nA modern audio player with spectrum visualization and library management.\n\nCreated by @AntDX316\nTwitter/X: https://x.com/AntDX316\n\nBuilt with Electron and Web Technologies\n\nÂ© 2024 Sound Player`,
+        title: 'About SoundPlayer',
+        message: 'SoundPlayer',
+        detail: `Version: ${app.getVersion()}\n\nA modern audio player with spectrum visualization and library management.\n\nCreated by @AntDX316\nTwitter/X: https://x.com/AntDX316\n\nBuilt with Electron and Web Technologies\n\n© 2024 SoundPlayer`,
         buttons: ['OK'],
         defaultId: 0
     });
