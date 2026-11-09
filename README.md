@@ -1,6 +1,5 @@
 # SoundPlayer 🎵
 
-Made by [@AntDX316](https://github.com/AntDX316)
 
 ![SoundPlayer screenshot](docs/soundplayer-original-4cc310938009.png)
 
